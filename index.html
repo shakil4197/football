@@ -3,6 +3,23 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      (function () {
+        var isExt = function (val) {
+          return typeof val === 'string' && (val.indexOf('chrome-extension://') !== -1 || val.indexOf('moz-extension://') !== -1);
+        };
+        window.addEventListener(
+          'error',
+          function (e) {
+            if (isExt(e.filename) || (e.error && isExt(e.error.stack))) {
+              e.preventDefault();
+              e.stopImmediatePropagation();
+            }
+          },
+          true
+        );
+      })();
+    </script>
     <title>Floodlight Cup — Automated Football Tournament Simulator</title>
     <meta
       name="description"

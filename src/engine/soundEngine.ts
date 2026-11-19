@@ -90,14 +90,15 @@ class StadiumSoundEngine {
     if (now - this.lastKickTime < 0.08) return;
     this.lastKickTime = now;
 
+    // 1. Low ball thump body
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
 
     osc.type = 'triangle';
-    const startFreq = power === 'shot' ? 175 : 130;
-    const endFreq = power === 'shot' ? 42 : 52;
-    const vol = power === 'shot' ? 0.18 : 0.07;
-    const dur = power === 'shot' ? 0.13 : 0.075;
+    const startFreq = power === 'shot' ? 185 : 145;
+    const endFreq = power === 'shot' ? 44 : 55;
+    const vol = power === 'shot' ? 0.36 : 0.21;
+    const dur = power === 'shot' ? 0.14 : 0.09;
 
     osc.frequency.setValueAtTime(startFreq, now);
     osc.frequency.exponentialRampToValueAtTime(endFreq, now + dur);
@@ -110,6 +111,33 @@ class StadiumSoundEngine {
 
     osc.start(now);
     osc.stop(now + dur + 0.01);
+
+    // 2. Crisp short leather boot-hit 'tus' transient
+    const clickDur = power === 'shot' ? 0.045 : 0.032;
+    const bufLen = Math.floor(ctx.sampleRate * clickDur);
+    const buffer = ctx.createBuffer(1, bufLen, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufLen; i++) {
+      data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.012));
+    }
+
+    const noise = ctx.createBufferSource();
+    noise.buffer = buffer;
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(power === 'shot' ? 1150 : 920, now);
+    filter.Q.setValueAtTime(1.1, now);
+
+    const nGain = ctx.createGain();
+    nGain.gain.setValueAtTime(power === 'shot' ? 0.24 : 0.14, now);
+    nGain.gain.exponentialRampToValueAtTime(0.001, now + clickDur);
+
+    noise.connect(filter);
+    filter.connect(nGain);
+    nGain.connect(ctx.destination);
+
+    noise.start(now);
   }
 
   public playSave(): void {
