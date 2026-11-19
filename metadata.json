@@ -1,0 +1,6 @@
+{
+  "name": "Floodlight Cup",
+  "description": "Automated 2D football tournament simulator featuring editable 8-16 club squads, automatic group-to-knockout brackets, 65-minute live matches with commentary and stadium audio, and live player statistics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

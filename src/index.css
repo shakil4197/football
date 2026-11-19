@@ -1,0 +1,58 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Oswald", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --color-stadium-bg: #0B111A;
+  --color-stadium-surface: #131C2B;
+  --color-stadium-elevated: #1A263A;
+  --color-turf-dark: #0E4D2F;
+  --color-turf-light: #125B38;
+  --color-broadcast-gold: #EAB308;
+  --color-broadcast-emerald: #10B981;
+}
+
+@layer base {
+  html {
+    background-color: #0B111A;
+    color: #F8FAFC;
+    font-family: var(--font-sans);
+  }
+
+  h1, h2, h3 {
+    text-wrap: balance;
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Subtle dark broadcast scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0B111A;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #243247;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #334663;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
