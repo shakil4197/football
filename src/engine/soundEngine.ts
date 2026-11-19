@@ -4,6 +4,10 @@ class StadiumSoundEngine {
   private ctx: AudioContext | null = null;
   private muted = false;
   private lastKickTime = 0;
+  private ambienceActive = false;
+  private ambienceSource: AudioBufferSourceNode | null = null;
+  private ambienceLfo: OscillatorNode | null = null;
+  private ambienceGain: GainNode | null = null;
 
   private ensureContext(): AudioContext | null {
     if (this.muted) return null;
@@ -23,8 +27,107 @@ class StadiumSoundEngine {
     this.ensureContext();
   }
 
+  public startAmbience(): void {
+    this.ambienceActive = true;
+    const ctx = this.ensureContext();
+    if (!ctx || this.ambienceSource) return;
+
+    // Seamless 4-second stereo pink-ish stadium crowd hum buffer
+    const duration = 4;
+    const sampleRate = ctx.sampleRate;
+    const length = sampleRate * duration;
+    const buffer = ctx.createBuffer(2, length, sampleRate);
+
+    for (let ch = 0; ch < 2; ch++) {
+      const out = buffer.getChannelData(ch);
+      let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+      for (let i = 0; i < length; i++) {
+        const white = Math.random() * 2 - 1;
+        b0 = 0.99886 * b0 + white * 0.0555179;
+        b1 = 0.99332 * b1 + white * 0.0750759;
+        b2 = 0.96900 * b2 + white * 0.1538520;
+        b3 = 0.86650 * b3 + white * 0.3104856;
+        b4 = 0.55000 * b4 + white * 0.5329522;
+        b5 = -0.7616 * b5 - white * 0.0168980;
+        out[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.05;
+        b6 = white * 0.115926;
+      }
+      // Crossfade edges for click-free loop
+      const fadeSamples = Math.floor(sampleRate * 0.15);
+      for (let i = 0; i < fadeSamples; i++) {
+        const t = i / fadeSamples;
+        out[length - fadeSamples + i] =
+          out[length - fadeSamples + i] * (1 - t) + out[i] * t;
+      }
+    }
+
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    source.loop = true;
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(480, ctx.currentTime);
+    filter.Q.setValueAtTime(0.65, ctx.currentTime);
+
+    const masterGain = ctx.createGain();
+    masterGain.gain.setValueAtTime(0.001, ctx.currentTime);
+    masterGain.gain.linearRampToValueAtTime(0.085, ctx.currentTime + 0.8);
+
+    // Subtle slow breathing swell so the stadium crowd feels alive
+    const lfo = ctx.createOscillator();
+    const lfoGain = ctx.createGain();
+    lfo.type = 'sine';
+    lfo.frequency.setValueAtTime(0.18, ctx.currentTime);
+    lfoGain.gain.setValueAtTime(0.018, ctx.currentTime);
+    lfo.connect(lfoGain);
+    lfoGain.connect(masterGain.gain);
+
+    source.connect(filter);
+    filter.connect(masterGain);
+    masterGain.connect(ctx.destination);
+
+    source.start();
+    lfo.start();
+
+    this.ambienceSource = source;
+    this.ambienceLfo = lfo;
+    this.ambienceGain = masterGain;
+  }
+
+  public stopAmbience(keepActiveFlag = false): void {
+    if (!keepActiveFlag) {
+      this.ambienceActive = false;
+    }
+    try {
+      this.ambienceSource?.stop();
+      this.ambienceSource?.disconnect();
+    } catch {
+      // Ignore already stopped
+    }
+    try {
+      this.ambienceLfo?.stop();
+      this.ambienceLfo?.disconnect();
+    } catch {
+      // Ignore already stopped
+    }
+    try {
+      this.ambienceGain?.disconnect();
+    } catch {
+      // Ignore
+    }
+    this.ambienceSource = null;
+    this.ambienceLfo = null;
+    this.ambienceGain = null;
+  }
+
   public setMuted(muted: boolean): void {
     this.muted = muted;
+    if (muted) {
+      this.stopAmbience(true);
+    } else if (this.ambienceActive) {
+      this.startAmbience();
+    }
   }
 
   public isMuted(): boolean {

@@ -368,6 +368,7 @@ export default function App() {
     if (activeClubs.length < 2) return;
 
     soundEngine.unlock();
+    soundEngine.startAmbience();
     const cleanedClubs = resetClubTournamentStats(clubs);
     setClubs(cleanedClubs);
     clubsRef.current = cleanedClubs;
@@ -392,6 +393,7 @@ export default function App() {
   };
 
   const handleResetTournament = () => {
+    soundEngine.stopAmbience();
     engineRef.current = null;
     nextCountdownRef.current = null;
     pendingNextFixtureIdRef.current = null;
