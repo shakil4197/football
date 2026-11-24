@@ -23,7 +23,7 @@ export const StandingsView: React.FC<StandingsViewProps> = ({
           Tournament Standings
         </h1>
         <p className="mt-1 text-xs text-slate-400">
-          Updated automatically after every 65-minute group match · Tiebreakers: Points, Goal Difference, Goals Scored
+          Updated automatically after every 60-minute group match · Tiebreakers: Points, Goal Difference, Goals Scored
         </p>
       </div>
 

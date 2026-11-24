@@ -39,7 +39,7 @@ export function buildTournamentFromClubs(selectedClubs: Club[]): {
 } {
   const count = selectedClubs.length;
 
-  // Special Case 1: Exactly 2 countries -> Direct 65-Minute Championship Final!
+  // Special Case 1: Exactly 2 countries -> Direct 60-Minute 1 vs 1 Match!
   if (count === 2) {
     return {
       groups: [],
@@ -48,7 +48,7 @@ export function buildTournamentFromClubs(selectedClubs: Club[]): {
           id: 'fix-final',
           order: 1,
           stage: 'FINAL',
-          stageLabel: 'Championship Final',
+          stageLabel: '1 vs 1 Match',
           bracketSlot: 'FINAL',
           homeTeamId: selectedClubs[0].id,
           awayTeamId: selectedClubs[1].id,
@@ -469,6 +469,7 @@ export function getPlayerLeaderboard(clubs: Club[]): PlayerLeaderboardRow[] {
           playerName: p.name,
           number: p.number,
           position: p.position,
+          photoUrl: p.photoUrl,
           clubId: club.id,
           clubName: club.name,
           clubShortCode: club.shortCode,

@@ -5,6 +5,7 @@ export interface Player {
   name: string;
   number: number;
   position: PlayerPosition;
+  photoUrl: string;
   attack: number;
   defense: number;
   pace: number;
@@ -164,6 +165,7 @@ export interface PitchPlayerEntity {
   name: string;
   number: number;
   position: PlayerPosition;
+  photoUrl: string;
   x: number;
   y: number;
   vx: number;
@@ -216,10 +218,17 @@ export interface LiveBannerCue {
   expiresAt: number;
 }
 
+export interface PlayerMatchStat {
+  goals: number;
+  assists: number;
+  saves: number;
+  shots: number;
+}
+
 export interface LiveMatchSnapshot {
   fixtureId: string;
   phase: MatchPhase;
-  matchSeconds: number; // 0 to 3900 (0-1800 1st Half, 1800-2100 Break, 2100-3900 2nd Half)
+  matchSeconds: number; // 0 to 3600 (60 minutes total, no 5-min break)
   homeScore: number;
   awayScore: number;
   homePenalties: number;
@@ -227,7 +236,9 @@ export interface LiveMatchSnapshot {
   penaltyLog: PenaltyKick[];
   events: MatchEvent[];
   stats: MatchStats;
+  matchPlayerStats: Record<string, PlayerMatchStat>;
   banner: LiveBannerCue | null;
+  preMatchCountdown: number | null;
   nextMatchCountdown: number | null;
 }
 
@@ -236,6 +247,7 @@ export interface PlayerLeaderboardRow {
   playerName: string;
   number: number;
   position: PlayerPosition;
+  photoUrl: string;
   clubId: string;
   clubName: string;
   clubShortCode: string;

@@ -11,6 +11,21 @@ interface PitchCanvasProps {
   engineRef: React.MutableRefObject<LiveMatchEngine | null>;
 }
 
+// Persistent image cache so player photos load once from /player-images/ and render at 60fps
+const imageCache = new Map<string, HTMLImageElement>();
+
+function getCachedPlayerImage(url: string): HTMLImageElement | null {
+  if (!url) return null;
+  let img = imageCache.get(url);
+  if (!img) {
+    img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.src = url;
+    imageCache.set(url, img);
+  }
+  return img.complete && img.naturalWidth > 0 ? img : null;
+}
+
 export const PitchCanvas: React.FC<PitchCanvasProps> = ({ engineRef }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -56,7 +71,6 @@ export const PitchCanvas: React.FC<PitchCanvasProps> = ({ engineRef }) => {
 
 function getShortDisplayName(fullName: string): string {
   const trimmed = fullName.trim();
-  // Keep compact labels like "L. Messi" -> "Messi", "Vinicius Jr" -> "Vinicius Jr", "E. Martinez" -> "Martinez"
   const parts = trimmed.split(/\s+/);
   if (parts.length === 1) return parts[0];
   if (parts[0].endsWith('.') && parts.length >= 2) {
@@ -75,8 +89,7 @@ function drawPitchScene(
 ) {
   ctx.save();
 
-  // Compute crisp aspect-preserving pitch rectangle filling maximum viewport space
-  const targetRatio = PITCH_W / PITCH_H; // 1.5625
+  const targetRatio = PITCH_W / PITCH_H;
   const outerMarginX = Math.max(22 * dpr, W * 0.032);
   const outerMarginY = Math.max(18 * dpr, H * 0.035);
   const availW = W - outerMarginX * 2;
@@ -97,11 +110,10 @@ function drawPitchScene(
   const scaleX = fieldW / PITCH_W;
   const scaleY = fieldH / PITCH_H;
 
-  // 1. Dark floodlit stadium surround turf apron
+  // 1. Dark floodlit stadium surround
   ctx.fillStyle = '#071710';
   ctx.fillRect(0, 0, W, H);
 
-  // Subtle dark perimeter border around field apron
   ctx.fillStyle = '#0A2518';
   ctx.fillRect(
     padX - Math.min(24 * dpr, padX * 0.7),
@@ -110,7 +122,7 @@ function drawPitchScene(
     fieldH + Math.min(18 * dpr, padY * 0.7) * 2
   );
 
-  // 2. Mowed alternating emerald grass bands
+  // 2. Mowed alternating emerald grass stripes
   const stripeCount = 12;
   const stripeW = fieldW / stripeCount;
   for (let i = 0; i < stripeCount; i++) {
@@ -118,7 +130,7 @@ function drawPitchScene(
     ctx.fillRect(padX + i * stripeW, padY, stripeW + 0.6, fieldH);
   }
 
-  // Stadium floodlight radial glow
+  // Stadium floodlight glow
   const lightGrad = ctx.createRadialGradient(
     W * 0.5,
     H * 0.5,
@@ -133,19 +145,16 @@ function drawPitchScene(
   ctx.fillStyle = lightGrad;
   ctx.fillRect(padX, padY, fieldW, fieldH);
 
-  // 3. Crisp painted white pitch lines
+  // 3. White pitch markings
   ctx.strokeStyle = 'rgba(248, 250, 252, 0.78)';
   ctx.lineWidth = Math.max(1.5, 1.75 * dpr);
-
   ctx.strokeRect(padX, padY, fieldW, fieldH);
 
-  // Halfway line
   ctx.beginPath();
   ctx.moveTo(toX(50), padY);
   ctx.lineTo(toX(50), padY + fieldH);
   ctx.stroke();
 
-  // Center circle & kickoff spot
   ctx.beginPath();
   ctx.arc(toX(50), toY(32), 9.15 * scaleY, 0, Math.PI * 2);
   ctx.stroke();
@@ -155,27 +164,23 @@ function drawPitchScene(
   ctx.arc(toX(50), toY(32), 2.8 * dpr, 0, Math.PI * 2);
   ctx.fill();
 
-  // Penalty boxes
   const penW = 16.5 * scaleX;
   const penH = 40.3 * scaleY;
   const penY = toY(32) - penH / 2;
   ctx.strokeRect(padX, penY, penW, penH);
   ctx.strokeRect(padX + fieldW - penW, penY, penW, penH);
 
-  // 6-yard boxes
   const sixW = 5.5 * scaleX;
   const sixH = 18.3 * scaleY;
   const sixY = toY(32) - sixH / 2;
   ctx.strokeRect(padX, sixY, sixW, sixH);
   ctx.strokeRect(padX + fieldW - sixW, sixY, sixW, sixH);
 
-  // Penalty spots
   ctx.beginPath();
   ctx.arc(toX(11.5), toY(32), 2.2 * dpr, 0, Math.PI * 2);
   ctx.arc(toX(88.5), toY(32), 2.2 * dpr, 0, Math.PI * 2);
   ctx.fill();
 
-  // Penalty arcs
   ctx.beginPath();
   ctx.arc(toX(11.5), toY(32), 9.15 * scaleY, -0.64, 0.64);
   ctx.stroke();
@@ -183,7 +188,6 @@ function drawPitchScene(
   ctx.arc(toX(88.5), toY(32), 9.15 * scaleY, Math.PI - 0.64, Math.PI + 0.64);
   ctx.stroke();
 
-  // Corner arcs
   const cr = 2.0 * scaleY;
   ctx.beginPath();
   ctx.arc(padX, padY, cr, 0, Math.PI / 2);
@@ -198,7 +202,7 @@ function drawPitchScene(
   ctx.arc(padX + fieldW, padY + fieldH, cr, Math.PI, Math.PI * 1.5);
   ctx.stroke();
 
-  // 4. Goals with white net mesh
+  // 4. Goals
   const goalTop = toY(GOAL_Y_MIN);
   const goalBot = toY(GOAL_Y_MAX);
   const goalH = goalBot - goalTop;
@@ -226,7 +230,6 @@ function drawPitchScene(
   drawGoal(padX - goalDepth, goalDepth);
   drawGoal(padX + fieldW, goalDepth);
 
-  // Subtle side-end country indicators
   const swapped = engine.phase === 'SECOND_HALF';
   const leftTeam = swapped ? engine.awayClub : engine.homeClub;
   const rightTeam = swapped ? engine.homeClub : engine.awayClub;
@@ -239,9 +242,9 @@ function drawPitchScene(
   ctx.textAlign = 'right';
   ctx.fillText(`${rightTeam.name.toUpperCase()} END`, padX + fieldW - 4 * dpr, padY - 6 * dpr);
 
-  // 5. Render ALL 22 Players with BOTH Jersey Circle Number AND Player Name
-  const playerR = Math.max(9.5 * dpr, Math.min(15 * dpr, fieldH * 0.025));
-  const nameFontSize = Math.max(9.5 * dpr, Math.min(12.5 * dpr, playerR * 0.92));
+  // 5. Render ALL 22 Players with Player Photo inside Circle + Jersey Number + Name
+  const playerR = Math.max(12.5 * dpr, Math.min(19.5 * dpr, fieldH * 0.033));
+  const nameFontSize = Math.max(9.5 * dpr, Math.min(12.5 * dpr, playerR * 0.72));
 
   for (const p of engine.entities) {
     const cx = toX(p.x);
@@ -251,67 +254,102 @@ function drawPitchScene(
     const isDiving = p.position === 'GK' && p.diveTimer > 0;
 
     // Ground shadow
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.38)';
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.42)';
     ctx.beginPath();
-    ctx.ellipse(cx, cy + playerR * 0.76, playerR * 1.0, playerR * 0.5, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx, cy + playerR * 0.82, playerR * 1.0, playerR * 0.48, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Active ball carrier halo
+    // Active ball carrier highlight halo
     if (isCarrier) {
       ctx.strokeStyle = '#FACC15';
-      ctx.lineWidth = 2.6 * dpr;
+      ctx.lineWidth = 2.8 * dpr;
       ctx.beginPath();
-      ctx.arc(cx, cy, playerR * 1.38, 0, Math.PI * 2);
+      ctx.arc(cx, cy, playerR * 1.28, 0, Math.PI * 2);
       ctx.stroke();
     }
 
-    // Player kit circle (GK stretches slightly while diving)
+    // Circular player avatar clipped with portrait photo from /player-images/
+    const photoImg = getCachedPlayerImage(p.photoUrl);
+
     ctx.save();
     ctx.translate(cx, cy);
     if (isDiving) {
-      ctx.scale(0.86, 1.42);
+      ctx.scale(0.88, 1.32);
     }
 
-    ctx.fillStyle = p.position === 'GK' ? '#0F172A' : club.primaryColor;
+    // Base fill fallback
     ctx.beginPath();
     ctx.arc(0, 0, playerR, 0, Math.PI * 2);
+    ctx.fillStyle = p.position === 'GK' ? '#0F172A' : club.primaryColor;
     ctx.fill();
 
+    // Draw player photo clipped to circle
+    if (photoImg) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(0, 0, playerR - 1 * dpr, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.drawImage(photoImg, -playerR, -playerR, playerR * 2, playerR * 2);
+      ctx.restore();
+    }
+
+    // Team kit border ring around circular photo
+    ctx.beginPath();
+    ctx.arc(0, 0, playerR, 0, Math.PI * 2);
     ctx.strokeStyle =
       p.position === 'GK'
         ? p.teamSide === 'home'
           ? '#FACC15'
           : '#38BDF8'
-        : club.secondaryColor;
-    ctx.lineWidth = 2.2 * dpr;
+        : club.primaryColor;
+    ctx.lineWidth = 2.8 * dpr;
     ctx.stroke();
+
+    // Subtle crisp outer highlight ring for visibility on turf
+    ctx.beginPath();
+    ctx.arc(0, 0, playerR + 1.2 * dpr, 0, Math.PI * 2);
+    ctx.strokeStyle = isCarrier ? '#FDE047' : 'rgba(255,255,255,0.65)';
+    ctx.lineWidth = 1.1 * dpr;
+    ctx.stroke();
+
     ctx.restore();
 
-    // Jersey Number inside circle
-    ctx.fillStyle = p.position === 'GK' ? '#F8FAFC' : club.secondaryColor;
-    ctx.font = `700 ${Math.round(playerR * 0.96)}px "JetBrains Mono", monospace`;
+    // Compact Jersey Number Badge on top-right edge of circle
+    const badgeR = Math.max(6.2 * dpr, playerR * 0.42);
+    const bx = cx + playerR * 0.72;
+    const by = cy - playerR * 0.72;
+
+    ctx.fillStyle = p.position === 'GK' ? '#0F172A' : club.primaryColor;
+    ctx.beginPath();
+    ctx.arc(bx, by, badgeR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.lineWidth = 1.2 * dpr;
+    ctx.stroke();
+
+    ctx.fillStyle = p.position === 'GK' ? '#FACC15' : club.secondaryColor;
+    ctx.font = `700 ${Math.round(badgeR * 1.12)}px "JetBrains Mono", monospace`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(String(p.number), cx, cy + 0.5 * dpr);
+    ctx.fillText(String(p.number), bx, by + 0.4 * dpr);
 
-    // ALWAYS draw Player Name directly below every player circle!
+    // ALWAYS draw Player Name right beneath every player circle
     const shortName = getShortDisplayName(p.name);
     ctx.font = `${isCarrier ? '700' : '600'} ${Math.round(nameFontSize)}px "Plus Jakarta Sans", sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
     const labelY = cy + playerR + 3.5 * dpr;
 
-    // Dark stroke outline for crisp readability on green turf
-    ctx.lineWidth = 3.2 * dpr;
+    ctx.lineWidth = 3.4 * dpr;
     ctx.lineJoin = 'round';
-    ctx.strokeStyle = 'rgba(6, 12, 20, 0.92)';
+    ctx.strokeStyle = 'rgba(6, 12, 20, 0.94)';
     ctx.strokeText(shortName, cx, labelY);
 
     ctx.fillStyle = isCarrier ? '#FDE047' : '#F8FAFC';
     ctx.fillText(shortName, cx, labelY);
   }
 
-  // 6. Ball Shot/Pass Trail
+  // 6. Ball Trail
   const ball = engine.ball;
   if (ball.trail.length > 1) {
     for (let i = 1; i < ball.trail.length; i++) {
@@ -328,19 +366,19 @@ function drawPitchScene(
   }
 
   // 7. Football with elevation shadow
-  const bx = toX(ball.x);
-  const by = toY(ball.y);
-  const ballR = Math.max(5.5 * dpr, playerR * 0.52);
+  const ballX = toX(ball.x);
+  const ballY = toY(ball.y);
+  const ballR = Math.max(5.5 * dpr, playerR * 0.4);
   const lift = Math.min(14 * dpr, ball.z * 1.45 * dpr);
 
   ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
   ctx.beginPath();
-  ctx.ellipse(bx + lift * 0.25, by + ballR * 0.75, ballR * 1.1, ballR * 0.55, 0, 0, Math.PI * 2);
+  ctx.ellipse(ballX + lift * 0.25, ballY + ballR * 0.75, ballR * 1.1, ballR * 0.55, 0, 0, Math.PI * 2);
   ctx.fill();
 
   ctx.fillStyle = '#FFFFFF';
   ctx.beginPath();
-  ctx.arc(bx, by - lift, ballR + lift * 0.08, 0, Math.PI * 2);
+  ctx.arc(ballX, ballY - lift, ballR + lift * 0.08, 0, Math.PI * 2);
   ctx.fill();
 
   ctx.strokeStyle = '#0F172A';
@@ -349,7 +387,7 @@ function drawPitchScene(
 
   ctx.fillStyle = '#0F172A';
   ctx.beginPath();
-  ctx.arc(bx, by - lift, ballR * 0.36, 0, Math.PI * 2);
+  ctx.arc(ballX, ballY - lift, ballR * 0.36, 0, Math.PI * 2);
   ctx.fill();
 
   // 8. Celebration Particles

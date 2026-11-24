@@ -11,15 +11,15 @@ import {
   PitchParticle,
   PitchPlayerEntity,
   Player,
+  PlayerMatchStat,
   SpeedOption,
 } from '../types/tournament';
 import { soundEngine } from './soundEngine';
 import { createEmptyMatchStats } from './tournamentLogic';
 
-// Exact 65-minute match timeline (in simulated seconds)
+// Exact 60-minute continuous match timeline (no 5-minute half-time break)
 export const FIRST_HALF_END = 30 * 60; // 1800s (30 min)
-export const HALFTIME_BREAK_END = 35 * 60; // 2100s (+5 min break)
-export const FULL_TIME_END = 65 * 60; // 3900s (+30 min 2nd half = 65 min total)
+export const FULL_TIME_END = 60 * 60; // 3600s (60 min total)
 
 export const PITCH_W = 100;
 export const PITCH_H = 64;
@@ -45,6 +45,7 @@ export interface MatchCompletionPayload {
   winnerId: string | null;
   events: MatchEvent[];
   stats: MatchStats;
+  matchPlayerStats: Record<string, PlayerMatchStat>;
 }
 
 export function formatMatchClock(matchSeconds: number, phase: MatchPhase): {
@@ -61,8 +62,8 @@ export function formatMatchClock(matchSeconds: number, phase: MatchPhase): {
   if (phase === 'PRE_MATCH') {
     return {
       clockText: '00:00',
-      countdownText: '65:00',
-      phaseText: '1st Half · 30:00',
+      countdownText: '60:00',
+      phaseText: 'Pre-Match Lineups',
       minuteNumber: 0,
     };
   }
@@ -80,24 +81,11 @@ export function formatMatchClock(matchSeconds: number, phase: MatchPhase): {
       minuteNumber: Math.min(30, mins + 1),
     };
   }
-  if (phase === 'HALFTIME_BREAK') {
-    const breakElapsed = Math.max(0, matchSeconds - FIRST_HALF_END);
-    const remaining = Math.max(0, 300 - breakElapsed);
-    const mins = Math.floor(remaining / 60);
-    const secs = Math.floor(remaining % 60);
-    return {
-      clockText: `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`,
-      countdownText,
-      phaseText: `Half-Time Break · ${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`,
-      minuteNumber: 30,
-    };
-  }
   if (phase === 'SECOND_HALF') {
-    const elapsedInSecond = Math.min(1800, Math.max(0, matchSeconds - HALFTIME_BREAK_END));
-    const halfRem = Math.max(0, 1800 - elapsedInSecond);
-    const footballTime = 1800 + elapsedInSecond;
-    const mins = Math.floor(footballTime / 60);
-    const secs = Math.floor(footballTime % 60);
+    const clamped = Math.min(FULL_TIME_END, Math.max(FIRST_HALF_END, matchSeconds));
+    const halfRem = Math.max(0, FULL_TIME_END - clamped);
+    const mins = Math.floor(clamped / 60);
+    const secs = Math.floor(clamped % 60);
     const hRemM = Math.floor(halfRem / 60);
     const hRemS = Math.floor(halfRem % 60);
     return {
@@ -112,14 +100,14 @@ export function formatMatchClock(matchSeconds: number, phase: MatchPhase): {
       clockText: 'PENS',
       countdownText: '00:00',
       phaseText: 'Penalty Shootout',
-      minuteNumber: 65,
+      minuteNumber: 60,
     };
   }
   return {
-    clockText: '65:00',
+    clockText: '60:00',
     countdownText: '00:00',
     phaseText: 'Full Time',
-    minuteNumber: 65,
+    minuteNumber: 60,
   };
 }
 
@@ -135,7 +123,6 @@ function getFormationCoordinates(
   const mids = players.filter((p) => p.position === 'MID');
   const fwds = players.filter((p) => p.position === 'FWD');
 
-  // Ensure up to 11 active players on pitch
   const activeGK = gks.slice(0, 1);
   const activeDEF = defs.slice(0, 4);
   const activeMID = mids.slice(0, 3);
@@ -150,7 +137,6 @@ function getFormationCoordinates(
     ...activeFWD.map((p) => ({ player: p, line: 'FWD' as const })),
   ];
 
-  // Fill up to 11 if custom roster has different position ratios
   for (const extra of extras) {
     if (ordered.length >= 11) break;
     ordered.push({ player: extra, line: extra.position });
@@ -231,7 +217,7 @@ export class LiveMatchEngine {
   public homeClub: Club;
   public awayClub: Club;
 
-  public phase: MatchPhase = 'FIRST_HALF';
+  public phase: MatchPhase = 'PRE_MATCH';
   public matchSeconds = 0;
   public homeScore = 0;
   public awayScore = 0;
@@ -244,14 +230,16 @@ export class LiveMatchEngine {
   public particles: PitchParticle[] = [];
   public events: MatchEvent[] = [];
   public stats: MatchStats;
+  public matchPlayerStats: Record<string, PlayerMatchStat> = {};
   public banner: LiveBannerCue | null = null;
+  public preMatchCountdown: number | null = 9;
   public nextMatchCountdown: number | null = null;
 
   private eventCounter = 1;
   private resetPauseTimer = 0;
   private lastTackleCommentarySim = -100;
   private lastMissCommentarySim = -100;
-  private nextShotWindowSim = 75;
+  private nextShotWindowSim = 70;
   private possessionAccum = 0;
   private penaltyTimer = 0;
   private penaltyTurn: 'home' | 'away' = 'home';
@@ -283,16 +271,46 @@ export class LiveMatchEngine {
     this.onMatchFinished = onMatchFinished;
     this.stats = createEmptyMatchStats();
 
+    // Initialize zeroed per-match stats for all players in both squads
+    [...homeClub.players, ...awayClub.players].forEach((p) => {
+      this.matchPlayerStats[p.id] = { goals: 0, assists: 0, saves: 0, shots: 0 };
+    });
+
     this.ball = this.createCenterBall();
     this.setupEntities(false);
     this.assignKickoffPossession('home');
+  }
 
+  public kickoffNow(): void {
+    if (this.phase !== 'PRE_MATCH') return;
+    this.phase = 'FIRST_HALF';
+    this.preMatchCountdown = null;
     this.addEvent(
       'KICKOFF',
-      `Kickoff under the floodlights! ${homeClub.name} get this ${fixture.stageLabel} clash underway against ${awayClub.name}.`,
-      { teamId: homeClub.id }
+      `Kickoff! ${this.homeClub.name} get this 60-minute ${this.fixture.stageLabel} clash underway against ${this.awayClub.name}.`,
+      { teamId: this.homeClub.id }
     );
     soundEngine.playWhistle('kickoff');
+  }
+
+  private recordMatchPlayerStat(
+    playerId: string,
+    clubId: string,
+    delta: { goals?: number; assists?: number; saves?: number; shots?: number }
+  ): void {
+    const existing = this.matchPlayerStats[playerId] ?? {
+      goals: 0,
+      assists: 0,
+      saves: 0,
+      shots: 0,
+    };
+    this.matchPlayerStats[playerId] = {
+      goals: existing.goals + (delta.goals ?? 0),
+      assists: existing.assists + (delta.assists ?? 0),
+      saves: existing.saves + (delta.saves ?? 0),
+      shots: existing.shots + (delta.shots ?? 0),
+    };
+    this.onStatDelta({ playerId, clubId, ...delta });
   }
 
   private createCenterBall(): BallEntity {
@@ -329,6 +347,7 @@ export class LiveMatchEngine {
       name: item.player.name,
       number: item.player.number,
       position: item.player.position,
+      photoUrl: item.player.photoUrl || '/player-images/default-player.svg',
       x: item.x,
       y: item.y,
       vx: 0,
@@ -411,10 +430,8 @@ export class LiveMatchEngine {
   public step(realDt: number, speed: SpeedOption, paused: boolean): void {
     const dt = Math.min(0.05, Math.max(0.001, realDt));
 
-    // Update particles even if brief celebration pause
     this.updateParticles(dt);
 
-    // Clear expired banners
     if (this.banner && performance.now() > this.banner.expiresAt) {
       this.banner = null;
     }
@@ -423,7 +440,17 @@ export class LiveMatchEngine {
       return;
     }
 
-    // Visual pace scaling keeps 2D pitch fluid & readable across 1x - 150x
+    // Pre-Match Lineup Showcase countdown before kickoff
+    if (this.phase === 'PRE_MATCH') {
+      if (this.preMatchCountdown !== null) {
+        this.preMatchCountdown -= dt;
+        if (this.preMatchCountdown <= 0) {
+          this.kickoffNow();
+        }
+      }
+      return;
+    }
+
     const visualScale =
       speed === 1
         ? 0.95
@@ -441,53 +468,28 @@ export class LiveMatchEngine {
       return;
     }
 
-    // Advance match clock according to selected speed
+    // Advance continuous 60-minute clock
     const simDt = dt * speed;
     this.matchSeconds += simDt;
 
-    // Phase transitions: 30m 1st Half -> 5m Break -> 30m 2nd Half -> Full Time / Penalties
+    // Seamless transition at 30:00 straight into 2nd Half (NO 5-minute half-time break)
     if (this.phase === 'FIRST_HALF' && this.matchSeconds >= FIRST_HALF_END) {
-      this.phase = 'HALFTIME_BREAK';
-      this.ball.ownerId = null;
-      this.ball.vx = 0;
-      this.ball.vy = 0;
-      this.ball.x = PITCH_W / 2;
-      this.ball.y = PITCH_H / 2;
+      this.phase = 'SECOND_HALF';
+      this.setupEntities(true);
+      this.assignKickoffPossession('away');
       this.addEvent(
-        'HALFTIME',
-        `Half-Time! ${this.homeClub.name} ${this.homeScore} – ${this.awayScore} ${this.awayClub.name}. Players head into a 5-minute tactical break.`
+        'SECOND_HALF_START',
+        `Second Half underway! Teams switch ends — ${this.awayClub.name} kick off the final 30 minutes.`,
+        { teamId: this.awayClub.id }
       );
       this.banner = {
         type: 'HALFTIME',
-        title: 'HALF-TIME BREAK',
-        subtitle: `${this.homeClub.shortCode} ${this.homeScore} – ${this.awayScore} ${this.awayClub.shortCode} · 5-Minute Tactical Interval`,
+        title: 'SECOND HALF',
+        subtitle: `${this.homeClub.shortCode} ${this.homeScore} – ${this.awayScore} ${this.awayClub.shortCode} · Ends Switched`,
         accentColor: '#EAB308',
-        expiresAt: performance.now() + 2600,
+        expiresAt: performance.now() + 2000,
       };
-      soundEngine.playWhistle('halftime');
-      return;
-    }
-
-    if (this.phase === 'HALFTIME_BREAK') {
-      // Gentle players strolling near center line during 5-min break
-      this.entities.forEach((p, idx) => {
-        const targetX = p.teamSide === 'home' ? 44 - (idx % 4) * 3 : 56 + (idx % 4) * 3;
-        const targetY = 18 + (idx % 6) * 5;
-        p.x += (targetX - p.x) * Math.min(1, dt * 1.6);
-        p.y += (targetY - p.y) * Math.min(1, dt * 1.6);
-      });
-
-      if (this.matchSeconds >= HALFTIME_BREAK_END) {
-        this.phase = 'SECOND_HALF';
-        this.setupEntities(true);
-        this.assignKickoffPossession('away');
-        this.addEvent(
-          'SECOND_HALF_START',
-          `Second Half underway! ${this.awayClub.name} kick off the final 30 minutes.`,
-          { teamId: this.awayClub.id }
-        );
-        soundEngine.playWhistle('kickoff');
-      }
+      soundEngine.playWhistle('kickoff');
       return;
     }
 
@@ -504,13 +506,11 @@ export class LiveMatchEngine {
       return;
     }
 
-    // Brief post-goal reset pause
     if (this.resetPauseTimer > 0) {
       this.resetPauseTimer -= dt;
       return;
     }
 
-    // Sub-step active pitch physics cleanly
     const subSteps = speed >= 60 ? 2 : 1;
     const subVisDt = visDt / subSteps;
     for (let s = 0; s < subSteps; s++) {
@@ -521,7 +521,6 @@ export class LiveMatchEngine {
   private stepActivePitch(visDt: number, speed: SpeedOption): void {
     const ball = this.ball;
 
-    // Possession tracking
     this.possessionAccum += visDt;
     if (this.possessionAccum >= 0.2) {
       this.possessionAccum = 0;
@@ -533,13 +532,11 @@ export class LiveMatchEngine {
       ? this.entities.find((e) => e.playerId === ball.ownerId) ?? null
       : null;
 
-    // Update cooldowns & dive timers
     for (const p of this.entities) {
       if (p.cooldown > 0) p.cooldown = Math.max(0, p.cooldown - visDt);
       if (p.diveTimer > 0) p.diveTimer = Math.max(0, p.diveTimer - visDt);
     }
 
-    // Move players
     const nearestBySide: Record<'home' | 'away', PitchPlayerEntity | null> = {
       home: null,
       away: null,
@@ -561,7 +558,6 @@ export class LiveMatchEngine {
       const ownGoalX = attackingRight ? 0 : PITCH_W;
 
       if (p.position === 'GK') {
-        // Goalkeeper patrols goal line tracking ball Y
         const desiredX = attackingRight ? 4.2 : PITCH_W - 4.2;
         const clampedBallY = Math.max(GOAL_Y_MIN + 0.8, Math.min(GOAL_Y_MAX - 0.8, ball.y));
         const gkSpeed = (6.5 + (p.goalkeeping / 100) * 5.2) * (p.diveTimer > 0 ? 1.55 : 1);
@@ -585,11 +581,9 @@ export class LiveMatchEngine {
       const maxSpeed = 6.2 + (p.pace / 100) * 4.4;
 
       if (owner && owner.playerId === p.playerId) {
-        // Ball carrier dribbles toward goal with slight weave away from nearby defenders
         let dirX = goalTargetX - p.x;
         let dirY = PITCH_H / 2 - p.y;
 
-        // Avoid nearest opponent slightly
         let nearestOpp: PitchPlayerEntity | null = null;
         let minOppDist = 14;
         for (const other of this.entities) {
@@ -612,7 +606,6 @@ export class LiveMatchEngine {
         p.x = Math.max(2, Math.min(PITCH_W - 2, p.x + p.vx * visDt));
         p.y = Math.max(3, Math.min(PITCH_H - 3, p.y + p.vy * visDt));
 
-        // Carry ball slightly ahead
         ball.x = p.x + (dirX / norm) * 1.35;
         ball.y = p.y + (dirY / norm) * 1.35;
         ball.vx = p.vx;
@@ -623,22 +616,17 @@ export class LiveMatchEngine {
         continue;
       }
 
-      // Off-ball movement
       let targetX = p.homeX;
       let targetY = p.homeY;
-
       const isNearestChaser = nearestBySide[p.teamSide]?.playerId === p.playerId;
 
       if (!owner && isNearestChaser) {
-        // Chase loose ball
         targetX = ball.x;
         targetY = ball.y;
       } else if (owner && owner.teamSide !== p.teamSide && isNearestChaser) {
-        // Press the opponent ball carrier
         targetX = owner.x + (ownGoalX - owner.x) * 0.08;
         targetY = owner.y;
       } else {
-        // Dynamic tactical team shift with ball X/Y
         const ballShiftX = (ball.x - PITCH_W / 2) * 0.42;
         const ballShiftY = (ball.y - PITCH_H / 2) * 0.34;
         const attackingBonus =
@@ -649,7 +637,6 @@ export class LiveMatchEngine {
         targetX = Math.max(8, Math.min(PITCH_W - 8, p.homeX + ballShiftX + attackingBonus));
         targetY = Math.max(5, Math.min(PITCH_H - 5, p.homeY + ballShiftY));
 
-        // Forward runs into channels when team has possession
         if (owner && owner.teamSide === p.teamSide && p.position === 'FWD') {
           targetX = attackingRight
             ? Math.min(PITCH_W - 10, targetX + 9)
@@ -672,7 +659,6 @@ export class LiveMatchEngine {
         p.vy = 0;
       }
 
-      // Attempt tackle if pressing close to opponent carrier
       if (
         owner &&
         owner.teamSide !== p.teamSide &&
@@ -680,9 +666,8 @@ export class LiveMatchEngine {
         Math.hypot(owner.x - p.x, owner.y - p.y) < 2.25
       ) {
         const tackleChance =
-          (0.32 + ((p.defense - owner.attack) / 220)) * visDt * 3.8;
+          (0.32 + (p.defense - owner.attack) / 220) * visDt * 3.8;
         if (Math.random() < Math.max(0.04, tackleChance)) {
-          // Successful tackle!
           owner.cooldown = 0.85;
           p.cooldown = 0.45;
           ball.ownerId = p.playerId;
@@ -708,12 +693,10 @@ export class LiveMatchEngine {
       }
     }
 
-    // Free ball physics (passes & shots)
     if (!ball.ownerId) {
       ball.x += ball.vx * visDt;
       ball.y += ball.vy * visDt;
 
-      // Trail points for crisp broadcast readability
       if (ball.isShot || Math.hypot(ball.vx, ball.vy) > 18) {
         ball.trail.push({ x: ball.x, y: ball.y });
         if (ball.trail.length > 10) ball.trail.shift();
@@ -721,12 +704,10 @@ export class LiveMatchEngine {
         ball.trail.shift();
       }
 
-      // Grass friction
       const drag = Math.pow(ball.isShot ? 0.82 : 0.48, visDt);
       ball.vx *= drag;
       ball.vy *= drag;
 
-      // Vertical arc decay
       if (ball.z > 0 || ball.vz !== 0) {
         ball.z += ball.vz * visDt;
         ball.vz -= 22 * visDt;
@@ -736,7 +717,6 @@ export class LiveMatchEngine {
         }
       }
 
-      // Check Goalkeeper Save on active shots!
       if (ball.isShot && ball.shotTargetSide) {
         const defendingGK = this.entities.find(
           (e) => e.teamSide === ball.shotTargetSide && e.position === 'GK'
@@ -756,7 +736,6 @@ export class LiveMatchEngine {
             defendingGK.cooldown = 0.8;
 
             if (Math.random() < saveProb) {
-              // Goalkeeper makes a save!
               this.handleGoalkeeperSave(defendingGK, shooter);
               return;
             }
@@ -764,11 +743,9 @@ export class LiveMatchEngine {
         }
       }
 
-      // Check Goal Line Crossing!
       const inGoalMouth = ball.y >= GOAL_Y_MIN && ball.y <= GOAL_Y_MAX;
       if (ball.x >= PITCH_W - 0.6) {
         if (inGoalMouth) {
-          // Ball crossed right goal line -> who attacks right?
           const scoringSide: 'home' | 'away' = this.getAttackingRight('home') ? 'home' : 'away';
           this.handleGoalScored(scoringSide);
           return;
@@ -788,7 +765,6 @@ export class LiveMatchEngine {
         }
       }
 
-      // Touchline bounce / keep in play cleanly
       if (ball.y < 1.5) {
         ball.y = 1.5;
         ball.vy = Math.abs(ball.vy) * 0.6;
@@ -797,7 +773,6 @@ export class LiveMatchEngine {
         ball.vy = -Math.abs(ball.vy) * 0.6;
       }
 
-      // Check ball pickup by any non-cooldown player
       for (const p of this.entities) {
         if (p.cooldown > 0) continue;
         const pickupRadius = p.position === 'GK' ? 2.8 : 2.15;
@@ -808,7 +783,6 @@ export class LiveMatchEngine {
               this.handleGoalkeeperSave(p, shooter);
               return;
             }
-            // Defender blocks shot
             ball.isShot = false;
             ball.shotTargetSide = null;
           }
@@ -824,7 +798,6 @@ export class LiveMatchEngine {
             ball.lastTouchPlayerId = p.playerId;
           }
 
-          // GK immediately distributes ball forward after picking up
           if (p.position === 'GK') {
             this.distributeFromGoalkeeper(p);
           }
@@ -843,25 +816,20 @@ export class LiveMatchEngine {
     nearestOpp: PitchPlayerEntity | null
   ): void {
     const distToGoal = Math.hypot(goalTargetX - carrier.x, PITCH_H / 2 - carrier.y);
-
-    // Calibrate shooting cadence across 1x (full 65 real minutes) through 150x
     const shotWindowOpen = this.matchSeconds >= this.nextShotWindowSim;
     const speedShotScale =
       speed === 1 ? 0.55 : speed === 10 ? 0.95 : speed === 25 ? 1.25 : speed === 60 ? 1.65 : 2.3;
 
-    // 1. Shoot if inside striking zone & shot window open
     if (shotWindowOpen && distToGoal < 28 && carrier.position !== 'GK') {
       const baseShotRate = (distToGoal < 17 ? 1.65 : 0.85) * speedShotScale;
       const attackFactor = 0.75 + (carrier.attack / 100) * 0.55;
       if (Math.random() < baseShotRate * attackFactor * visDt) {
-        // Space next shot attempt across simulated match clock (~105-205 sim seconds)
-        this.nextShotWindowSim = this.matchSeconds + 105 + Math.random() * 100;
+        this.nextShotWindowSim = this.matchSeconds + 100 + Math.random() * 95;
         this.fireShot(carrier, goalTargetX);
         return;
       }
     }
 
-    // 2. Pass to a better-positioned teammate (especially when pressured or in midfield)
     const underPressure = minOppDist < 7.5 && nearestOpp !== null;
     const passRate = (underPressure ? 2.2 : 0.85) * (0.75 + (carrier.passing / 100) * 0.45);
 
@@ -871,7 +839,6 @@ export class LiveMatchEngine {
         (t) => t.teamSide === carrier.teamSide && t.playerId !== carrier.playerId && t.position !== 'GK'
       );
 
-      // Score teammates favoring forward progression and open space
       let bestTarget: PitchPlayerEntity | null = null;
       let bestScore = -999;
 
@@ -901,7 +868,6 @@ export class LiveMatchEngine {
     const dist = Math.hypot(dx, dy) || 1;
     const passSpeed = Math.min(34, Math.max(19, dist * 1.25));
 
-    // Passing rating governs precision
     const inaccuracy = ((100 - passer.passing) / 100) * 0.16;
     const angle = Math.atan2(dy, dx) + (Math.random() * 2 - 1) * inaccuracy;
 
@@ -937,13 +903,11 @@ export class LiveMatchEngine {
     const ball = this.ball;
     const targetSide: 'home' | 'away' = shooter.teamSide === 'home' ? 'away' : 'home';
 
-    // Accuracy scales with attack stat (some shots on target, some narrowly wide)
     const onTargetProb = Math.min(0.84, Math.max(0.46, 0.42 + (shooter.attack / 100) * 0.44));
     const isOnTarget = Math.random() < onTargetProb;
 
     let aimY: number;
     if (isOnTarget) {
-      // Aim near left or right corner of goal mouth
       aimY =
         Math.random() < 0.5
           ? GOAL_Y_MIN + 1.0 + Math.random() * 2.8
@@ -978,12 +942,7 @@ export class LiveMatchEngine {
       if (isOnTarget) this.stats.awayShotsOnTarget += 1;
     }
 
-    this.onStatDelta({
-      playerId: shooter.playerId,
-      clubId: shooter.teamId,
-      shots: 1,
-    });
-
+    this.recordMatchPlayerStat(shooter.playerId, shooter.teamId, { shots: 1 });
     soundEngine.playKick('shot');
   }
 
@@ -1004,11 +963,7 @@ export class LiveMatchEngine {
     if (gk.teamSide === 'home') this.stats.homeSaves += 1;
     else this.stats.awaySaves += 1;
 
-    this.onStatDelta({
-      playerId: gk.playerId,
-      clubId: gk.teamId,
-      saves: 1,
-    });
+    this.recordMatchPlayerStat(gk.playerId, gk.teamId, { saves: 1 });
 
     const shooterName = shooter?.name ?? 'the forward';
     const tmpl = SAVE_TEMPLATES[Math.floor(Math.random() * SAVE_TEMPLATES.length)];
@@ -1041,7 +996,6 @@ export class LiveMatchEngine {
       }
     }
 
-    // Goal kick for defending GK on that side
     const rightSideTeam: 'home' | 'away' = this.getAttackingRight('home') ? 'away' : 'home';
     const defendingSide: 'home' | 'away' = edge === 'right' ? rightSideTeam : rightSideTeam === 'home' ? 'away' : 'home';
     const gk = this.entities.find((e) => e.teamSide === defendingSide && e.position === 'GK');
@@ -1071,7 +1025,6 @@ export class LiveMatchEngine {
     if (scoringSide === 'home') this.homeScore += 1;
     else this.awayScore += 1;
 
-    // Identify scorer & assister
     let scorer = this.entities.find(
       (e) => e.playerId === ball.lastTouchPlayerId && e.teamSide === scoringSide
     );
@@ -1091,18 +1044,10 @@ export class LiveMatchEngine {
     }
 
     if (scorer) {
-      this.onStatDelta({
-        playerId: scorer.playerId,
-        clubId: club.id,
-        goals: 1,
-      });
+      this.recordMatchPlayerStat(scorer.playerId, club.id, { goals: 1 });
     }
     if (assister) {
-      this.onStatDelta({
-        playerId: assister.playerId,
-        clubId: club.id,
-        assists: 1,
-      });
+      this.recordMatchPlayerStat(assister.playerId, club.id, { assists: 1 });
     }
 
     const scorerName = scorer?.name ?? club.name;
@@ -1136,7 +1081,6 @@ export class LiveMatchEngine {
 
     soundEngine.playGoal();
 
-    // Reset players & kickoff for conceding team
     const concedingSide: 'home' | 'away' = scoringSide === 'home' ? 'away' : 'home';
     this.setupEntities(this.phase === 'SECOND_HALF');
     this.assignKickoffPossession(concedingSide);
@@ -1157,12 +1101,12 @@ export class LiveMatchEngine {
 
     this.addEvent(
       'PENALTY_START',
-      `Level after 65 minutes (${this.homeScore}–${this.awayScore})! This knockout clash goes to a Penalty Shootout!`
+      `Level after 60 minutes (${this.homeScore}–${this.awayScore})! This clash goes to a Penalty Shootout!`
     );
     this.banner = {
       type: 'PENALTIES',
       title: 'PENALTY SHOOTOUT',
-      subtitle: `${this.homeClub.name} vs ${this.awayClub.name} · Knockout Decider`,
+      subtitle: `${this.homeClub.name} vs ${this.awayClub.name} · Decider`,
       accentColor: '#EAB308',
       expiresAt: performance.now() + 2400,
     };
@@ -1178,7 +1122,6 @@ export class LiveMatchEngine {
     const kicker = kickers[this.penaltyKicksTaken[kickingSide] % Math.max(1, kickers.length)];
     const keeper = this.entities.find((e) => e.teamSide === defendingSide && e.position === 'GK');
 
-    // Move non-participating players near center circle
     this.entities.forEach((e, idx) => {
       e.x = 46 + (idx % 5) * 2;
       e.y = 20 + Math.floor(idx / 5) * 6;
@@ -1224,15 +1167,15 @@ export class LiveMatchEngine {
           soundEngine.playGoal();
           this.addEvent(
             'PENALTY_GOAL',
-            `PENALTY SCORED! ${kicker.name} (${kickingClub.shortCode}) dispatches it past ${keeper.name}! (${this.homePenalties}–${this.awayPenalties})`,
+            `PENALTY SCORED! ${kicker.name} (${kickingClub.shortCode}) scores past ${keeper.name}! (${this.homePenalties}–${this.awayPenalties})`,
             { teamId: kickingClub.id, scorerName: kicker.name }
           );
         } else {
           soundEngine.playSave();
-          this.onStatDelta({ playerId: keeper.playerId, clubId: keeper.teamId, saves: 1 });
+          this.recordMatchPlayerStat(keeper.playerId, keeper.teamId, { saves: 1 });
           this.addEvent(
             'PENALTY_SAVE',
-            `PENALTY SAVED! ${keeper.name} guesses right and blocks ${kicker.name}'s spot kick! (${this.homePenalties}–${this.awayPenalties})`,
+            `PENALTY SAVED! ${keeper.name} stops ${kicker.name}'s spot kick! (${this.homePenalties}–${this.awayPenalties})`,
             { teamId: keeper.teamId, goalkeeperName: keeper.name }
           );
         }
@@ -1249,13 +1192,11 @@ export class LiveMatchEngine {
           },
         ];
 
-        // Check if shootout is mathematically decided
         if (this.isShootoutDecided()) {
           this.finishMatch();
           return;
         }
 
-        // Advance turn
         if (this.penaltyTurn === 'home') {
           this.penaltyTurn = 'away';
         } else {
@@ -1318,7 +1259,6 @@ export class LiveMatchEngine {
       return false;
     }
 
-    // Sudden death (after 5 each, must be equal kicks taken)
     return hTaken === aTaken && hScore !== aScore;
   }
 
@@ -1355,14 +1295,6 @@ export class LiveMatchEngine {
         : `FULL TIME! Honours even: ${this.homeClub.name} ${this.homeScore} – ${this.awayScore} ${this.awayClub.name}.`
     );
 
-    this.banner = {
-      type: 'FULLTIME',
-      title: 'FULL TIME',
-      subtitle: `${this.homeClub.shortCode} ${this.homeScore} – ${this.awayScore} ${this.awayClub.shortCode}${penText}`,
-      accentColor: '#EAB308',
-      expiresAt: performance.now() + 3600,
-    };
-
     if (this.fixture.stage === 'FINAL') {
       soundEngine.playChampionFanfare();
     } else {
@@ -1379,6 +1311,7 @@ export class LiveMatchEngine {
       winnerId,
       events: [...this.events],
       stats: { ...this.stats },
+      matchPlayerStats: { ...this.matchPlayerStats },
     });
   }
 
@@ -1408,7 +1341,9 @@ export class LiveMatchEngine {
       penaltyLog: this.penaltyLog,
       events: this.events,
       stats: { ...this.stats },
+      matchPlayerStats: { ...this.matchPlayerStats },
       banner: this.banner,
+      preMatchCountdown: this.preMatchCountdown,
       nextMatchCountdown,
     };
   }

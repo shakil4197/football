@@ -11,6 +11,7 @@ import {
 import {
   createCustomClub,
   createDefaultClubs,
+  getPlayerPhotoPath,
   resetClubTournamentStats,
 } from './data/defaultClubs';
 import {
@@ -26,7 +27,7 @@ import { soundEngine } from './engine/soundEngine';
 import { SetupView } from './components/SetupView';
 import { LiveBroadcastView } from './components/LiveBroadcastView';
 
-const STORAGE_KEY = 'floodlight_cup_nations_v2';
+const STORAGE_KEY = 'floodlight_cup_nations_v3';
 
 function loadInitialClubs(): Club[] {
   try {
@@ -34,11 +35,19 @@ function loadInitialClubs(): Club[] {
     if (raw) {
       const parsed = JSON.parse(raw) as Club[];
       if (Array.isArray(parsed) && parsed.length >= 20 && parsed[0]?.flag) {
-        return resetClubTournamentStats(parsed);
+        return resetClubTournamentStats(
+          parsed.map((club) => ({
+            ...club,
+            players: club.players.map((p) => ({
+              ...p,
+              photoUrl: p.photoUrl || getPlayerPhotoPath(club.shortCode, p.number, p.name),
+            })),
+          }))
+        );
       }
     }
   } catch {
-    // Fallback to default 20 nations
+    // Fallback to default 20 nations with /player-images/ portraits
   }
   return createDefaultClubs();
 }
@@ -51,7 +60,7 @@ export default function App() {
   const [activeFixtureId, setActiveFixtureId] = useState<string | null>(null);
   const [championId, setChampionId] = useState<string | null>(null);
 
-  // Default to 1x TRUE REAL-TIME (full 65 real minutes: 30m + 5m break + 30m)
+  // Default 1x real-time (full 60 real minutes, no 5-min halftime break)
   const [speed, setSpeed] = useState<SpeedOption>(1);
   const [paused, setPaused] = useState<boolean>(false);
   const [muted, setMuted] = useState<boolean>(false);
@@ -80,7 +89,7 @@ export default function App() {
       const cleaned = resetClubTournamentStats(clubs);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(cleaned));
     } catch {
-      // Ignore storage quota issues
+      // Ignore storage quota issues (e.g., large uploaded data URLs)
     }
   }, [clubs]);
 
@@ -193,8 +202,9 @@ export default function App() {
         fixturesRef.current = progressed;
         setFixtures(progressed);
 
+        // If 1 vs 1 match OR Tournament Final has ended -> Stop permanently, never auto-restart
         const completedMatch = progressed.find((f) => f.id === payload.fixtureId);
-        if (completedMatch?.stage === 'FINAL') {
+        if (completedMatch?.stage === 'FINAL' || progressed.length === 1) {
           setChampionId(payload.winnerId);
           setTournamentStatus('TOURNAMENT_COMPLETE');
           statusRef.current = 'TOURNAMENT_COMPLETE';
@@ -203,12 +213,13 @@ export default function App() {
           return;
         }
 
+        // Tournament non-final match: Display Post-Match Player Report (photos, goals, assists) for 12s, then auto-start next match lineups
         const upcoming = progressed.find(
           (f) => f.status === 'SCHEDULED' && f.homeTeamId && f.awayTeamId
         );
         if (upcoming) {
           pendingNextFixtureIdRef.current = upcoming.id;
-          nextCountdownRef.current = speedRef.current >= 60 ? 2.0 : 4.0;
+          nextCountdownRef.current = speedRef.current >= 60 ? 6.0 : 12.0;
         } else {
           pendingNextFixtureIdRef.current = null;
           nextCountdownRef.current = null;
@@ -331,6 +342,7 @@ export default function App() {
           name: `Player ${nextNum}`,
           number: Math.min(99, nextNum),
           position: 'MID',
+          photoUrl: '/player-images/default-player.svg',
           attack: 80,
           defense: 76,
           pace: 79,
@@ -389,6 +401,25 @@ export default function App() {
 
     if (drawnFixtures[0]) {
       launchFixture(drawnFixtures[0], cleanedClubs);
+    }
+  };
+
+  const handleKickoffNow = () => {
+    soundEngine.unlock();
+    if (engineRef.current) {
+      engineRef.current.kickoffNow();
+      setSnapshot(engineRef.current.getSnapshot(nextCountdownRef.current));
+    }
+  };
+
+  const handleAdvanceNextNow = () => {
+    const nextId = pendingNextFixtureIdRef.current;
+    if (!nextId) return;
+    nextCountdownRef.current = null;
+    pendingNextFixtureIdRef.current = null;
+    const nextFx = fixturesRef.current.find((f) => f.id === nextId);
+    if (nextFx) {
+      launchFixture(nextFx, clubsRef.current);
     }
   };
 
@@ -452,6 +483,8 @@ export default function App() {
       onChangeSpeed={setSpeed}
       onTogglePause={() => setPaused((p) => !p)}
       onToggleMute={handleToggleMute}
+      onKickoffNow={handleKickoffNow}
+      onAdvanceNextNow={handleAdvanceNextNow}
       onResetTournament={handleResetTournament}
     />
   );

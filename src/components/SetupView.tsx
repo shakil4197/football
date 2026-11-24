@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Check, Pencil, Plus, RotateCcw, Trash2, X, Play } from 'lucide-react';
+import { Check, Pencil, Plus, RotateCcw, Trash2, X, Play, ImagePlus } from 'lucide-react';
 import { Club, Player, PlayerPosition } from '../types/tournament';
 import { computeClubRatings } from '../data/defaultClubs';
 
@@ -47,16 +47,28 @@ export const SetupView: React.FC<SetupViewProps> = ({
   );
 
   const formatSummary = useMemo(() => {
-    if (selectedCount < 2) return 'Click countries below to select teams (2 for Quick Final, 8–20 for Full Cup)';
+    if (selectedCount < 2)
+      return 'Select 2 countries for a 1 vs 1 Match, or 8–20 countries for a Full Tournament (60 Min/Match)';
     if (selectedCount === 2) {
-      return `Championship Match · ${selectedClubs[0].name} vs ${selectedClubs[1].name} · Full 65 Min (30m + 5m + 30m)`;
+      return `1 vs 1 Match · ${selectedClubs[0].name} vs ${selectedClubs[1].name} · Full 60 Min (No Halftime Break)`;
     }
     if (selectedCount < 8) {
-      return `${selectedCount} Nations · Group Stage → ${selectedCount >= 4 ? 'Semi-Finals → ' : ''}Final · 65 Min/Match`;
+      return `${selectedCount} Nations · Group Stage → ${selectedCount >= 4 ? 'Semi-Finals → ' : ''}Final · 60 Min/Match`;
     }
     const numGroups = selectedCount >= 12 ? 4 : 2;
-    return `${selectedCount} Nations · ${numGroups} Groups → Quarter-Finals → Semi-Finals → Final · 65 Min/Match`;
+    return `${selectedCount} Nations · ${numGroups} Groups → Quarter-Finals → Semi-Finals → Final · 60 Min/Match`;
   }, [selectedClubs, selectedCount]);
+
+  const handlePhotoUpload = (clubId: string, playerId: string, file: File | undefined) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        onUpdatePlayer(clubId, playerId, { photoUrl: reader.result });
+      }
+    };
+    reader.readAsDataURL(file);
+  };
 
   return (
     <div className="relative h-screen w-screen overflow-hidden flex flex-col bg-[#080E17] text-white select-none">
@@ -83,11 +95,18 @@ export const SetupView: React.FC<SetupViewProps> = ({
             Floodlight Cup
           </h1>
           <span className="text-xs font-medium text-amber-400">
-            Select Your National Teams · 65-Min Full Matches
+            1 vs 1 or 8–20 Team Tournament · 60-Min Matches
           </span>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onSelectPresetCount(2)}
+            className="min-h-[34px] rounded border border-white/15 bg-[#131C2B]/90 px-3 py-1 text-xs font-semibold text-slate-200 hover:border-emerald-400/50 hover:text-white transition-colors cursor-pointer"
+          >
+            1 vs 1
+          </button>
           <button
             type="button"
             onClick={() => onSelectPresetCount(8)}
@@ -157,7 +176,6 @@ export const SetupView: React.FC<SetupViewProps> = ({
                     : 'border-white/10 bg-[#111927]/85 hover:border-white/30 hover:bg-[#162133]/95'
                 }`}
               >
-                {/* Top row: Flag + Selection Check */}
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-center gap-2.5 min-w-0">
                     <span className="text-2xl leading-none" aria-hidden="true">
@@ -192,7 +210,6 @@ export const SetupView: React.FC<SetupViewProps> = ({
                   </span>
                 </div>
 
-                {/* Bottom row: Mini ratings + Edit Squad button */}
                 <div className="mt-3 flex items-center justify-between border-t border-white/[0.08] pt-2.5 text-[11px]">
                   <span className="font-mono text-slate-400 tabular-nums">
                     A{ratings.attack} · M{ratings.midfield} · D{ratings.defense}
@@ -251,22 +268,22 @@ export const SetupView: React.FC<SetupViewProps> = ({
           >
             <Play className="h-5 w-5 fill-current" />
             {selectedCount === 2
-              ? `Start ${selectedClubs[0].shortCode} vs ${selectedClubs[1].shortCode}`
+              ? `Start 1 vs 1 (${selectedClubs[0].shortCode} vs ${selectedClubs[1].shortCode})`
               : selectedCount >= 3
-              ? `Start Cup (${selectedCount} Teams)`
+              ? `Start Tournament (${selectedCount} Teams)`
               : 'Select Teams to Start'}
           </button>
         </div>
       </footer>
 
-      {/* Squad Editor Modal */}
+      {/* Squad Editor Modal with Player Photo Preview & Upload */}
       {editingClub && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
           onClick={() => setEditingClubId(null)}
         >
           <div
-            className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-lg border border-white/15 bg-[#111927]"
+            className="flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-lg border border-white/15 bg-[#111927]"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
@@ -277,7 +294,7 @@ export const SetupView: React.FC<SetupViewProps> = ({
                     {editingClub.name} Squad Editor
                   </h2>
                   <p className="text-xs text-slate-400">
-                    Customize player names, jersey numbers, positions, and ratings
+                    Photos load from /player-images/ · Click any photo icon to upload a custom player image
                   </p>
                 </div>
               </div>
@@ -314,7 +331,6 @@ export const SetupView: React.FC<SetupViewProps> = ({
             </div>
 
             <div className="flex-1 overflow-y-auto p-5 space-y-4">
-              {/* Country Meta Inputs */}
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-12">
                 <div className="sm:col-span-5">
                   <label className="mb-1 block text-[11px] text-slate-400">Team Name</label>
@@ -361,11 +377,11 @@ export const SetupView: React.FC<SetupViewProps> = ({
                 </div>
               </div>
 
-              {/* Squad Roster Table */}
               <div className="overflow-x-auto">
                 <table className="w-full border-collapse text-left text-xs">
                   <thead>
                     <tr className="border-b border-white/10 text-slate-400">
+                      <th className="py-2 pr-2 font-medium w-14">Photo</th>
                       <th className="py-2 pr-2 font-medium w-12">#</th>
                       <th className="py-2 pr-2 font-medium min-w-[140px]">Player Name</th>
                       <th className="py-2 pr-2 font-medium w-20">Pos</th>
@@ -380,6 +396,34 @@ export const SetupView: React.FC<SetupViewProps> = ({
                   <tbody className="divide-y divide-white/[0.06]">
                     {editingClub.players.map((player) => (
                       <tr key={player.id}>
+                        <td className="py-1.5 pr-2">
+                          <label
+                            title="Upload custom photo"
+                            className="relative inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-full overflow-hidden border border-white/20 bg-[#080E17] group/photo"
+                          >
+                            <img
+                              src={player.photoUrl || '/player-images/default-player.svg'}
+                              alt={player.name}
+                              referrerPolicy="no-referrer"
+                              onError={(e) => {
+                                (e.currentTarget as HTMLImageElement).src =
+                                  '/player-images/default-player.svg';
+                              }}
+                              className="h-full w-full object-cover"
+                            />
+                            <span className="absolute inset-0 flex items-center justify-center bg-black/60 opacity-0 group-hover/photo:opacity-100 transition-opacity">
+                              <ImagePlus className="h-3.5 w-3.5 text-white" />
+                            </span>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={(e) =>
+                                handlePhotoUpload(editingClub.id, player.id, e.target.files?.[0])
+                              }
+                            />
+                          </label>
+                        </td>
                         <td className="py-1.5 pr-2">
                           <input
                             type="number"

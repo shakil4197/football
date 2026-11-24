@@ -137,9 +137,21 @@ export const StatsView: React.FC<StatsViewProps> = ({ clubs }) => {
                   <td className="py-3 pl-5 pr-2 font-mono text-slate-400 tabular-nums">
                     {index + 1}
                   </td>
-                  <td className="py-3 px-2">
-                    <span className="font-semibold text-white">{row.playerName}</span>
-                    <span className="ml-2 font-mono text-[11px] text-slate-500">#{row.number}</span>
+                  <td className="py-2.5 px-2">
+                    <div className="flex items-center gap-2.5">
+                      <img
+                        src={row.photoUrl || '/player-images/default-player.svg'}
+                        alt={row.playerName}
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).src = '/player-images/default-player.svg';
+                        }}
+                        className="h-7 w-7 shrink-0 rounded-full object-cover border border-white/15 bg-slate-900"
+                      />
+                      <div>
+                        <span className="font-semibold text-white">{row.playerName}</span>
+                        <span className="ml-1.5 font-mono text-[11px] text-slate-500">#{row.number}</span>
+                      </div>
+                    </div>
                   </td>
                   <td className="py-3 px-2">
                     <div className="flex items-center gap-2">
@@ -199,14 +211,25 @@ const AwardSpotlightCard: React.FC<AwardSpotlightCardProps> = ({
   value,
 }) => (
   <div className="rounded-lg border border-white/10 bg-[#131C2B] p-5 flex items-center justify-between gap-4">
-    <div className="min-w-0 space-y-1">
-      <p className="text-xs font-medium text-slate-400">{title}</p>
-      <p className="truncate font-display text-xl font-bold text-white">
-        {row ? row.playerName : '—'}
-      </p>
-      <p className="text-xs text-slate-400">
-        {row ? `${row.clubName} · #${row.number} ${row.position}` : 'Matchday data pending'}
-      </p>
+    <div className="flex items-center gap-3 min-w-0">
+      <img
+        src={row?.photoUrl || '/player-images/default-player.svg'}
+        alt={row?.playerName ?? title}
+        onError={(e) => {
+          (e.currentTarget as HTMLImageElement).src = '/player-images/default-player.svg';
+        }}
+        className="h-12 w-12 shrink-0 rounded-full object-cover border-2 bg-slate-900"
+        style={{ borderColor: row?.clubColor ?? '#334155' }}
+      />
+      <div className="min-w-0 space-y-0.5">
+        <p className="text-xs font-medium text-slate-400">{title}</p>
+        <p className="truncate font-display text-xl font-bold text-white">
+          {row ? row.playerName : '—'}
+        </p>
+        <p className="text-xs text-slate-400">
+          {row ? `${row.clubName} · #${row.number} ${row.position}` : 'Matchday data pending'}
+        </p>
+      </div>
     </div>
     <div className="text-right shrink-0">
       <p className="font-mono text-3xl font-bold text-amber-400 tabular-nums">{value}</p>

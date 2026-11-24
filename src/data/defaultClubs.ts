@@ -16,18 +16,46 @@ interface RawNationSeed {
   }>;
 }
 
+export function getPlayerPhotoSlug(shortCode: string, number: number, name: string): string {
+  const cleanName = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return `${shortCode.toLowerCase()}-${number}-${cleanName}`;
+}
+
+export function getPlayerPhotoPath(shortCode: string, number: number, name: string): string {
+  return `/player-images/${getPlayerPhotoSlug(shortCode, number, name)}.svg`;
+}
+
+export function computePlayerOverall(player: Player): number {
+  if (player.position === 'GK') {
+    return Math.round(player.goalkeeping * 0.7 + player.defense * 0.15 + player.passing * 0.15);
+  }
+  if (player.position === 'DEF') {
+    return Math.round(player.defense * 0.55 + player.pace * 0.25 + player.passing * 0.2);
+  }
+  if (player.position === 'MID') {
+    return Math.round(player.passing * 0.4 + player.attack * 0.25 + player.defense * 0.2 + player.pace * 0.15);
+  }
+  return Math.round(player.attack * 0.55 + player.pace * 0.3 + player.passing * 0.15);
+}
+
 function buildPlayer(
   clubId: string,
+  shortCode: string,
   index: number,
   name: string,
   number: number,
   position: PlayerPosition,
   tier: number,
-  boost = 0
+  boost = 0,
+  customPhotoUrl?: string
 ): Player {
   const base = Math.min(95, Math.max(66, tier + boost));
   const jitter = ((index * 7 + clubId.length * 3) % 5) - 2;
   const clamp = (val: number) => Math.max(45, Math.min(98, Math.round(val)));
+  const photoUrl = customPhotoUrl ?? getPlayerPhotoPath(shortCode, number, name);
 
   if (position === 'GK') {
     return {
@@ -35,6 +63,7 @@ function buildPlayer(
       name,
       number,
       position,
+      photoUrl,
       attack: clamp(base - 30 + jitter),
       defense: clamp(base - 8 + jitter),
       pace: clamp(base - 18 + jitter),
@@ -54,6 +83,7 @@ function buildPlayer(
       name,
       number,
       position,
+      photoUrl,
       attack: clamp(base - 15 + jitter),
       defense: clamp(base + 5 + jitter),
       pace: clamp(base - 2 + jitter),
@@ -73,6 +103,7 @@ function buildPlayer(
       name,
       number,
       position,
+      photoUrl,
       attack: clamp(base + jitter),
       defense: clamp(base - 2 + jitter),
       pace: clamp(base + 1 + jitter),
@@ -91,6 +122,7 @@ function buildPlayer(
     name,
     number,
     position,
+    photoUrl,
     attack: clamp(base + 6 + jitter),
     defense: clamp(base - 20 + jitter),
     pace: clamp(base + 4 + jitter),
@@ -557,7 +589,7 @@ export function createDefaultClubs(): Club[] {
     secondaryColor: seed.secondaryColor,
     selected: false, // User manually picks countries before clicking Start
     players: seed.roster.map((r, i) =>
-      buildPlayer(seed.id, i, r.name, r.number, r.position, seed.tier, r.boost ?? 0)
+      buildPlayer(seed.id, seed.shortCode, i, r.name, r.number, r.position, seed.tier, r.boost ?? 0)
     ),
   }));
 }
@@ -593,16 +625,27 @@ export function createCustomClub(existingCount: number): Club {
   ];
   const numbers = [1, 2, 4, 5, 3, 6, 8, 10, 7, 9, 11];
 
+  const shortCode = `N${num < 10 ? '0' : ''}${num}`;
   const players = positions.map((pos, idx) => {
     const fn = FIRST_NAMES[(num * 3 + idx * 5) % FIRST_NAMES.length];
     const ln = LAST_NAMES[(num * 7 + idx * 3) % LAST_NAMES.length];
-    return buildPlayer(id, idx, `${fn} ${ln}`, numbers[idx], pos, 82, (idx % 3) - 1);
+    return buildPlayer(
+      id,
+      shortCode,
+      idx,
+      `${fn} ${ln}`,
+      numbers[idx],
+      pos,
+      82,
+      (idx % 3) - 1,
+      '/player-images/default-player.svg'
+    );
   });
 
   return {
     id,
     name: `Nation ${num}`,
-    shortCode: `N${num < 10 ? '0' : ''}${num}`,
+    shortCode,
     flag: '🏳️',
     primaryColor: palette.primary,
     secondaryColor: palette.secondary,
